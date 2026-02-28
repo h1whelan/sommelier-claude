@@ -1,0 +1,4 @@
+logs/
+.sommelier-lock
+__pycache__/
+*.pyc
