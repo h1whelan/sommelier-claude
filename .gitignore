@@ -2,3 +2,4 @@ logs/
 .sommelier-lock
 __pycache__/
 *.pyc
+*.results.json
