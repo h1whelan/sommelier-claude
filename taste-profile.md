@@ -1,14 +1,16 @@
 # Henry's Wine Taste Profile
 
-*Last updated: 2026-02-28 (initial profile — awaiting Vivino data import)*
+*Last updated: 2026-02-28 (initial profile — Vivino GDPR export pending)*
 
 ## Overview
 
-This profile will be enriched over time from two sources:
-1. **Vivino data** — once GDPR export arrives, `scripts/import-vivino.py` will parse
-   Henry's ratings, favourites, and patterns into structured data below
-2. **Monthly feedback** — after each selection, Claude updates this profile based on
-   Henry's responses
+**Vivino profile:** [henry.whelan1](https://www.vivino.com/users/henry.whelan1) (user ID: 70235821)
+- **32 wines rated** on Vivino, average rating **4.3/5** — rates generously but selectively
+- Premium Vivino user, UK-based
+
+This profile will be enriched from:
+1. **Vivino GDPR export** — request from Vivino settings, then run `scripts/import-vivino.py`
+2. **Monthly feedback** — Claude updates this profile based on Henry's responses each month
 
 ## Known Preferences
 
