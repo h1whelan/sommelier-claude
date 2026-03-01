@@ -1,5 +1,6 @@
 logs/
 .sommelier-lock
+.telegram-feedback-offset
 __pycache__/
 *.pyc
 *.results.json
