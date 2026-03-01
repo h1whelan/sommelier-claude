@@ -105,75 +105,103 @@ class RetailerPurchaser:
 class MajesticPurchaser(RetailerPurchaser):
     """Automate purchases from majestic.co.uk."""
 
+    def dismiss_popups(self):
+        """Dismiss cookie banner and AB-testing overlay."""
+        self.dismiss_cookies()
+        try:
+            self.page.evaluate(
+                "document.querySelector('.ab_widget_container_popin-simple')?.remove()"
+            )
+        except Exception:
+            pass
+
     def login(self):
         print("  Logging into Majestic...")
-        self.page.goto("https://www.majestic.co.uk/account/login", wait_until="domcontentloaded")
-        time.sleep(2)
-        self.dismiss_cookies()
+        self.page.goto("https://www.majestic.co.uk/login", wait_until="domcontentloaded")
+        time.sleep(5)
+        self.dismiss_popups()
 
-        self.page.fill('input[name="email"], input[type="email"], #email', self.credentials["email"])
-        self.page.fill('input[name="password"], input[type="password"], #password', self.credentials["password"])
-        self.page.click('button[type="submit"], input[type="submit"]')
-        time.sleep(3)
+        self.page.fill("#mail_t1", self.credentials["email"])
+        self.page.fill("#Password", self.credentials["password"])
+        self.page.click('#loginForm button[type="submit"]')
+        time.sleep(5)
 
-        # Verify login succeeded
-        if "login" in self.page.url.lower():
+        # Majestic redirects to /?login=1 on success
+        if "login=1" in self.page.url or "login" not in self.page.url.split("?")[0].lower():
+            print("  Logged in successfully")
+            self.screenshot("majestic-logged-in")
+        else:
             self.screenshot("majestic-login-failed")
             raise Exception("Majestic login failed — check credentials")
-
-        print("  Logged in successfully")
-        self.screenshot("majestic-logged-in")
 
     def add_to_cart(self, wine):
         print(f"  Adding: {wine['name']} ({wine['url']})")
         self.page.goto(wine["url"], wait_until="domcontentloaded")
-        time.sleep(2)
+        time.sleep(5)
+        self.dismiss_popups()
 
-        # Check the page loaded a real product
         title = self.page.title()
-        if "404" in title or "not found" in title.lower():
+        if "not found" in title.lower() or "page not found" in title.lower():
             print(f"  WARNING: Product page not found for {wine['name']}")
             return False
 
         self.screenshot(f"majestic-product-{wine['name'][:30].replace(' ', '-')}")
 
-        # Look for add to cart button
+        # Majestic uses <a> tags with id="add-to-cart-button-XXXX" and text "ADD TO TROLLEY"
         for selector in [
+            'a[id^="add-to-cart-button"]',
+            'a:has-text("ADD TO TROLLEY")',
+            'button:has-text("ADD TO TROLLEY")',
             'button:has-text("Add to basket")',
-            'button:has-text("Add to Basket")',
-            'button:has-text("Add to cart")',
-            '[data-action="add-to-basket"]',
-            '.add-to-basket',
-            'button.btn-add-to-basket',
+            '.add-to-cart-btn:visible',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
-                print(f"  Added to basket")
-                time.sleep(2)
+                time.sleep(3)
+                print(f"  Added to trolley")
+                self.screenshot(f"majestic-added-{wine['name'][:20].replace(' ', '-')}")
                 return True
             except Exception:
                 continue
 
         self.screenshot(f"majestic-no-add-button-{wine['name'][:20]}")
-        print(f"  WARNING: Could not find add-to-basket button for {wine['name']}")
+        print(f"  WARNING: Could not find add-to-trolley button for {wine['name']}")
         return False
 
     def checkout(self):
-        print("  Proceeding to checkout...")
-        self.page.goto("https://www.majestic.co.uk/basket", wait_until="domcontentloaded")
-        time.sleep(2)
-        self.screenshot("majestic-basket")
+        print("  Proceeding to Majestic checkout...")
+        self.page.goto("https://www.majestic.co.uk/customer/cart", wait_until="domcontentloaded")
+        time.sleep(5)
+        self.screenshot("majestic-cart")
 
-        # Extract basket total
+        # Check if cart is empty
+        body = self.page.inner_text("body")
+        if "basket is empty" in body.lower() or "trolley is empty" in body.lower():
+            return {
+                "status": "failed",
+                "retailer": "majestic",
+                "message": "Cart is empty — wines were not added successfully",
+            }
+
+        # Extract total
         total_text = ""
-        for selector in ['.basket-total', '.order-total', '[data-testid="basket-total"]']:
-            try:
-                total_text = self.page.inner_text(selector)
-                break
-            except Exception:
-                continue
+        try:
+            total_text = self.page.evaluate("""
+                () => {
+                    const els = document.querySelectorAll('*');
+                    for (const el of els) {
+                        const text = el.textContent.trim();
+                        if (text.match(/^Total:?\\s*£[\\d.]+$/) || text.match(/^£[\\d.]+$/) && el.closest('[class*="total"]')) {
+                            return text;
+                        }
+                    }
+                    return '';
+                }
+            """)
+        except Exception:
+            pass
 
-        print(f"  Basket total: {total_text}")
+        print(f"  Cart total: {total_text}")
 
         if self.dry_run:
             print("  DRY RUN — not completing checkout")
@@ -182,23 +210,21 @@ class MajesticPurchaser(RetailerPurchaser):
 
         # Click checkout
         for selector in [
+            'a:has-text("PROCEED TO CHECKOUT")',
+            'a:has-text("CHECKOUT")',
             'a:has-text("Checkout")',
             'button:has-text("Checkout")',
-            'a:has-text("Proceed")',
-            '.checkout-button',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
-                time.sleep(3)
+                time.sleep(5)
                 break
             except Exception:
                 continue
 
         self.screenshot("majestic-checkout-step1")
 
-        # At this point, if the account has saved payment + address,
-        # Majestic should show a confirmation page.
-        # We look for a "Place order" / "Confirm" button.
+        # Look for place order / confirm
         for selector in [
             'button:has-text("Place order")',
             'button:has-text("Place Order")',
@@ -215,14 +241,15 @@ class MajesticPurchaser(RetailerPurchaser):
 
         self.screenshot("majestic-order-confirmed")
 
-        # Try to extract order confirmation number
         confirmation = ""
-        for selector in ['.order-confirmation', '.order-number', '[data-testid="order-number"]']:
-            try:
-                confirmation = self.page.inner_text(selector)
-                break
-            except Exception:
-                continue
+        try:
+            page_text = self.page.inner_text("body")
+            import re
+            match = re.search(r'(?:order|confirmation|reference)\s*(?:#|number|:)\s*(\w+)', page_text, re.IGNORECASE)
+            if match:
+                confirmation = match.group(1)
+        except Exception:
+            pass
 
         return {
             "status": "ordered",
@@ -270,15 +297,15 @@ class BBRPurchaser(RetailerPurchaser):
         self.screenshot(f"bbr-product-{wine['name'][:30].replace(' ', '-')}")
 
         for selector in [
-            'button:has-text("ADD TO BASKET")',
             'button:has-text("Add to basket")',
+            'button:has-text("ADD TO BASKET")',
             'button:has-text("Add to Basket")',
-            'button:has-text("BUY")',
+            'button:has-text("Buy")',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
                 print(f"  Added to basket")
-                time.sleep(2)
+                time.sleep(3)
                 return True
             except Exception:
                 continue
@@ -289,34 +316,32 @@ class BBRPurchaser(RetailerPurchaser):
 
     def checkout(self):
         print("  Proceeding to BBR checkout...")
-        # BBR basket is at /basket but may redirect to /cart
-        self.page.goto("https://www.bbr.com/basket", wait_until="networkidle", timeout=30000)
-        time.sleep(3)
-        self.screenshot("bbr-basket")
+        self.page.goto("https://www.bbr.com/cart", wait_until="networkidle", timeout=30000)
+        time.sleep(5)
+        self.screenshot("bbr-cart")
 
-        # Extract total from page
+        # Extract order total
         total_text = ""
         try:
-            total_text = self.page.inner_text('[class*="total"], [data-testid*="total"]')
+            total_text = self.page.inner_text('.order-total')
+            total_text = total_text.replace('\n', ' ').strip()
         except Exception:
             try:
-                # Fallback: look for price-like text
-                total_text = self.page.evaluate("""
-                    () => {
-                        const els = document.querySelectorAll('*');
-                        for (const el of els) {
-                            const text = el.textContent.trim();
-                            if (text.match(/^£\\d+\\.\\d{2}$/) && el.children.length === 0) {
-                                return text;
-                            }
-                        }
-                        return '';
-                    }
-                """)
+                total_text = self.page.inner_text('.order-subtotal')
+                total_text = total_text.replace('\n', ' ').strip()
             except Exception:
                 pass
 
-        print(f"  Basket total: {total_text}")
+        print(f"  Cart total: {total_text}")
+
+        # Check if cart is empty
+        body = self.page.inner_text("body")
+        if "basket is empty" in body.lower() or "cart is empty" in body.lower() or "no items" in body.lower():
+            return {
+                "status": "failed",
+                "retailer": "bbr",
+                "message": "Cart is empty — wines were not added successfully",
+            }
 
         if self.dry_run:
             print("  DRY RUN — not completing checkout")
@@ -325,11 +350,11 @@ class BBRPurchaser(RetailerPurchaser):
 
         # Click checkout / proceed button
         for selector in [
+            'a:has-text("Proceed to checkout")',
             'a:has-text("Checkout")',
             'a:has-text("CHECKOUT")',
             'button:has-text("Checkout")',
             'button:has-text("Proceed")',
-            'a:has-text("Proceed to checkout")',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
@@ -378,6 +403,190 @@ class BBRPurchaser(RetailerPurchaser):
         }
 
 
+class WineSocietyPurchaser(RetailerPurchaser):
+    """Automate purchases from thewinesociety.com."""
+
+    def login(self):
+        print("  Logging into The Wine Society...")
+        self.page.goto("https://www.thewinesociety.com/login", wait_until="networkidle", timeout=30000)
+        time.sleep(3)
+        self.dismiss_cookies()
+
+        self.page.fill("#email", self.credentials["email"])
+        self.page.fill("#password", self.credentials["password"])
+        self.screenshot("winesociety-login-filled")
+        self.page.click('button:has-text("Login")')
+        time.sleep(5)
+
+        # Wine Society stays on /login but shows "Welcome back" on success
+        body_text = self.page.inner_text("body")
+        if "welcome back" in body_text.lower():
+            print("  Logged in successfully")
+            self.screenshot("winesociety-logged-in")
+        else:
+            self.screenshot("winesociety-login-failed")
+            raise Exception("Wine Society login failed — check credentials")
+
+    def add_to_cart(self, wine):
+        print(f"  Adding: {wine['name']} ({wine['url']})")
+        self.page.goto(wine["url"], wait_until="networkidle", timeout=30000)
+        time.sleep(3)
+
+        title = self.page.title()
+        if "can't find" in title.lower() or "not found" in title.lower():
+            print(f"  WARNING: Product page not found for {wine['name']}")
+            return False
+
+        self.screenshot(f"winesociety-product-{wine['name'][:30].replace(' ', '-')}")
+
+        # Main product add-to-basket button (not the recommendation tile ones)
+        try:
+            self.page.click("button.js-add-to-basket:not(.product-tile__button)", timeout=10000)
+            time.sleep(3)
+            print(f"  Added to basket")
+            return True
+        except Exception:
+            pass
+
+        # Fallback selectors
+        for selector in [
+            'button:has-text("Add to basket")',
+            'button:has-text("Add to Basket")',
+            'button.busy-button.js-add-to-basket',
+        ]:
+            try:
+                self.page.click(selector, timeout=5000)
+                print(f"  Added to basket")
+                time.sleep(2)
+                return True
+            except Exception:
+                continue
+
+        self.screenshot(f"winesociety-no-add-button-{wine['name'][:20]}")
+        print(f"  WARNING: Could not find add-to-basket button for {wine['name']}")
+        return False
+
+    def checkout(self):
+        print("  Proceeding to Wine Society checkout...")
+        self.page.goto("https://www.thewinesociety.com/basket/", wait_until="networkidle", timeout=30000)
+        time.sleep(3)
+        self.screenshot("winesociety-basket")
+
+        # Extract basket total from summary section
+        total_text = ""
+        try:
+            # basket-summary contains item count, subtotal, discounts, total
+            summary = self.page.inner_text('.basket-summary')
+            summary = summary.replace('\n', ' ').strip()
+            # Extract subtotal and total
+            import re
+            subtotal_match = re.search(r'Item subtotal\s*(£[\d,.]+)', summary)
+            total_match = re.search(r'Total\s*(£[\d,.]+)', summary)
+            parts = []
+            if subtotal_match:
+                parts.append(f"Subtotal {subtotal_match.group(1)}")
+            if total_match:
+                parts.append(f"Total {total_match.group(1)}")
+            total_text = ", ".join(parts) if parts else summary
+        except Exception:
+            try:
+                total_text = self.page.inner_text('.basket-total')
+                total_text = total_text.replace('\n', ' ').strip()
+            except Exception:
+                pass
+
+        print(f"  Basket total: {total_text}")
+
+        # Check if basket is empty
+        body = self.page.inner_text("body")
+        if "basket is empty" in body.lower():
+            return {
+                "status": "failed",
+                "retailer": "thewinesociety",
+                "message": "Basket is empty — wines were not added successfully",
+            }
+
+        if self.dry_run:
+            print("  DRY RUN — not completing checkout")
+            self.screenshot("winesociety-checkout-dry-run")
+            return {"status": "dry_run", "total": total_text, "retailer": "thewinesociety"}
+
+        # Click Continue to Checkout
+        try:
+            self.page.click('a:has-text("Continue to Checkout")', timeout=10000)
+            time.sleep(5)
+        except Exception:
+            self.screenshot("winesociety-no-checkout-button")
+            raise Exception("Could not find 'Continue to Checkout' button")
+
+        self.screenshot("winesociety-delivery-page")
+
+        # Select Home Delivery
+        try:
+            self.page.click('text=Home Delivery', timeout=10000)
+            time.sleep(5)
+        except Exception:
+            self.screenshot("winesociety-no-home-delivery")
+            raise Exception("Could not find 'Home Delivery' option")
+
+        self.screenshot("winesociety-home-delivery-selected")
+
+        # Select first available delivery date
+        try:
+            self.page.click('.delivery-date-selector__item', timeout=10000)
+            time.sleep(3)
+        except Exception:
+            self.screenshot("winesociety-no-delivery-date")
+            raise Exception("Could not find delivery date options")
+
+        # Click Review & Pay
+        try:
+            self.page.click('button:has-text("Review & Pay")', timeout=10000)
+            time.sleep(5)
+        except Exception:
+            self.screenshot("winesociety-no-review-pay")
+            raise Exception("Could not find 'Review & Pay' button")
+
+        self.screenshot("winesociety-review-pay")
+
+        # On Review & Pay page, look for Place Order / Confirm
+        for selector in [
+            'button:has-text("Place order")',
+            'button:has-text("Place Order")',
+            'button:has-text("Confirm order")',
+            'button:has-text("Confirm Order")',
+            'button:has-text("Pay now")',
+            'button:has-text("Complete order")',
+            'button:has-text("Submit order")',
+        ]:
+            try:
+                self.page.click(selector, timeout=10000)
+                time.sleep(5)
+                break
+            except Exception:
+                continue
+
+        self.screenshot("winesociety-order-confirmed")
+
+        # Try to extract confirmation
+        confirmation = ""
+        try:
+            page_text = self.page.inner_text("body")
+            import re
+            match = re.search(r'(?:order|confirmation|reference)\s*(?:#|number|:)\s*(\w+)', page_text, re.IGNORECASE)
+            if match:
+                confirmation = match.group(1)
+        except Exception:
+            pass
+
+        return {
+            "status": "ordered",
+            "total": total_text,
+            "confirmation": confirmation,
+            "retailer": "thewinesociety",
+        }
+
+
 class GenericPurchaser(RetailerPurchaser):
     """Fallback purchaser for retailers without specific automation.
     Adds items to cart but stops before checkout, notifying Henry to complete manually."""
@@ -403,6 +612,7 @@ class GenericPurchaser(RetailerPurchaser):
 PURCHASERS = {
     "majestic": MajesticPurchaser,
     "bbr": BBRPurchaser,
+    "thewinesociety": WineSocietyPurchaser,
 }
 
 
@@ -446,7 +656,10 @@ def main():
     results = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=['--disable-blink-features=AutomationControlled'],
+        )
 
         for retailer, wines in by_retailer.items():
             print(f"\n{'='*60}")
@@ -456,8 +669,10 @@ def main():
             context = browser.new_context(
                 viewport={"width": 1280, "height": 800},
                 user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                locale="en-GB",
             )
             page = context.new_page()
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
 
             purchaser_class = get_purchaser(retailer)
             creds = credentials.get(retailer, {})
