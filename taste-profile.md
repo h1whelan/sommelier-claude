@@ -52,6 +52,9 @@ These are the wines Henry rated highest — this is the core signal for what to 
 
 10. **Likes Chilean wine** — Perez Cruz Carmenère (4.2, "great value"), Caballo Loco Grand Cru Apalta (4.2), Calyptra Chardonnay (4.3). Appreciates value.
 
+### Do NOT buy:
+- **Gusbourne** — any wine. Henry has a cellar full already.
+
 ### What he doesn't like:
 - **Too fruit-forward** — Andrew Murray Syrah 2020 rated 4.1 but "not quite up my strasse, very fruit forward and bold"
 - **Too full/hot** — Pahlmeyer at 15.5% was "too full on"
