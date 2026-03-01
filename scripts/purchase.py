@@ -439,6 +439,20 @@ class WineSocietyPurchaser(RetailerPurchaser):
 
         self.screenshot(f"winesociety-product-{wine['name'][:30].replace(' ', '-')}")
 
+        # Ensure "Bottle" format is selected (some wines default to case)
+        try:
+            # Look for format selector and pick "Bottle" if available
+            for sel in ['select.js-format-select', 'select[name="format"]', '.product-purchase select']:
+                try:
+                    self.page.select_option(sel, label="Bottle", timeout=3000)
+                    time.sleep(1)
+                    print(f"  Selected 'Bottle' format")
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
         # Main product add-to-basket button (not the recommendation tile ones)
         try:
             self.page.click("button.js-add-to-basket:not(.product-tile__button)", timeout=10000)
@@ -511,13 +525,58 @@ class WineSocietyPurchaser(RetailerPurchaser):
             self.screenshot("winesociety-checkout-dry-run")
             return {"status": "dry_run", "total": total_text, "retailer": "thewinesociety"}
 
-        # Click Continue to Checkout
+        # First, change Hermitage from "Case of 3" to "Bottle" if needed
         try:
-            self.page.click('a:has-text("Continue to Checkout")', timeout=10000)
-            time.sleep(5)
-        except Exception:
-            self.screenshot("winesociety-no-checkout-button")
-            raise Exception("Could not find 'Continue to Checkout' button")
+            selects = self.page.query_selector_all('select')
+            for sel in selects:
+                options = sel.evaluate('el => Array.from(el.options).map(o => ({value: o.value, text: o.text}))')
+                for opt in options:
+                    if 'case' in opt['text'].lower() and sel.evaluate('el => el.options[el.selectedIndex].text').lower().startswith('case'):
+                        # This select has "Case" selected — switch to "Bottle"
+                        bottle_opt = next((o for o in options if 'bottle' in o['text'].lower()), None)
+                        if bottle_opt:
+                            sel.select_option(value=bottle_opt['value'])
+                            time.sleep(3)
+                            print(f"  Changed format from Case to Bottle")
+        except Exception as e:
+            print(f"  Note: Could not check/change format selects: {e}")
+
+        self.screenshot("winesociety-basket-corrected")
+
+        # Click Continue to Checkout using JavaScript as fallback
+        for selector in [
+            'button:has-text("Continue to Checkout")',
+            'a:has-text("Continue to Checkout")',
+            '.basket-summary >> button',
+            'text=Continue to Checkout',
+        ]:
+            try:
+                self.page.click(selector, timeout=5000)
+                time.sleep(5)
+                break
+            except Exception:
+                continue
+        else:
+            # JS fallback: find any element containing "Continue to Checkout"
+            try:
+                clicked = self.page.evaluate('''() => {
+                    const els = document.querySelectorAll('a, button, [role="button"]');
+                    for (const el of els) {
+                        if (el.textContent.trim().includes('Continue to Checkout')) {
+                            el.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }''')
+                if clicked:
+                    time.sleep(5)
+                else:
+                    self.screenshot("winesociety-no-checkout-button")
+                    raise Exception("Could not find 'Continue to Checkout' button")
+            except Exception:
+                self.screenshot("winesociety-no-checkout-button")
+                raise Exception("Could not find 'Continue to Checkout' button")
 
         self.screenshot("winesociety-delivery-page")
 
