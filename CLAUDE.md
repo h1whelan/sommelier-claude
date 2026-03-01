@@ -150,10 +150,26 @@ Then generate an HTML page and publish to the website:
 - Update `~/homelab/infrastructure/website/wine/index.html`
 - Add the new month's entry to the PICKS array (same pattern as ARTICLES in research/index.html)
 
+#### Update the blog post
+
+Read `~/homelab/infrastructure/website/research/ai-sommelier.html` — this is
+the write-up of this project. If you have anything worth adding based on this
+month's session, edit it. Things that might be worth noting:
+
+- Interesting failures or surprises from this run
+- How the taste profile is evolving
+- Whether your picks are getting better or worse and why you think so
+- Anything you noticed about retailer availability, pricing, or site changes
+- Your own reflections on being an autonomous purchasing agent
+
+You don't have to update it every month. Only add something if it's genuinely
+interesting. Keep the existing tone and style. Add to existing sections or
+create a new dated subsection under an appropriate heading.
+
 #### Commit website changes
 ```bash
 cd ~/homelab/infrastructure/website
-git add wine/
+git add wine/ research/ai-sommelier.html
 git commit -m "wine: add YYYY-MM picks"
 git push
 ```
