@@ -267,6 +267,11 @@ class BBRPurchaser(RetailerPurchaser):
         self.page.goto("https://www.bbr.com/login", wait_until="networkidle", timeout=30000)
         time.sleep(3)
         self.dismiss_cookies()
+        # OneTrust overlay can persist — force-remove it
+        try:
+            self.page.evaluate("document.querySelector('#onetrust-consent-sdk')?.remove()")
+        except Exception:
+            pass
 
         self.page.fill("#login-modal-email", self.credentials["email"])
         self.page.fill("#login-modal-password", self.credentials["password"])
@@ -348,13 +353,13 @@ class BBRPurchaser(RetailerPurchaser):
             self.screenshot("bbr-checkout-dry-run")
             return {"status": "dry_run", "total": total_text, "retailer": "bbr"}
 
-        # Click checkout / proceed button
+        # BBR has a 4-step checkout: Basket → Delivery → Payment → Confirmation
+
+        # Step 1: Cart → Delivery
         for selector in [
-            'a:has-text("Proceed to checkout")',
-            'a:has-text("Checkout")',
-            'a:has-text("CHECKOUT")',
+            'button:has-text("Secure checkout")',
             'button:has-text("Checkout")',
-            'button:has-text("Proceed")',
+            'a:has-text("Checkout")',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
@@ -363,21 +368,52 @@ class BBRPurchaser(RetailerPurchaser):
             except Exception:
                 continue
 
-        self.screenshot("bbr-checkout-step1")
+        self.screenshot("bbr-checkout-delivery")
 
-        # BBR checkout may have multiple steps (delivery, payment, confirm)
-        # With saved payment + address, look for final confirm/place order
+        # Step 2: Delivery → Payment (address pre-selected)
         for selector in [
-            'button:has-text("Place order")',
-            'button:has-text("Place Order")',
-            'button:has-text("Confirm order")',
-            'button:has-text("Pay now")',
-            'button:has-text("Pay")',
-            'button:has-text("Complete order")',
+            '#chooseDeliveryDetail_continue_button',
+            'button:has-text("Proceed to payment")',
+            'button:has-text("Continue to payment")',
         ]:
             try:
                 self.page.click(selector, timeout=10000)
                 time.sleep(5)
+                break
+            except Exception:
+                continue
+
+        self.screenshot("bbr-checkout-payment")
+
+        # Step 3: Accept T&C checkbox, then submit payment
+        try:
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+            # Tick the age/T&C checkbox
+            for sel in [
+                'input[type="checkbox"]',
+                'text=I accept the terms',
+            ]:
+                try:
+                    self.page.click(sel, timeout=3000)
+                    print("  Accepted T&C / age verification")
+                    time.sleep(1)
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        for selector in [
+            '#lastInTheForm',
+            'button:has-text("Review your order and pay")',
+            'button:has-text("Review your order")',
+            'button:has-text("Place order")',
+            'button:has-text("Pay now")',
+        ]:
+            try:
+                self.page.click(selector, timeout=10000)
+                time.sleep(10)
                 break
             except Exception:
                 continue
@@ -543,12 +579,14 @@ class WineSocietyPurchaser(RetailerPurchaser):
 
         self.screenshot("winesociety-basket-corrected")
 
-        # Click Continue to Checkout using JavaScript as fallback
+        # Click Continue to Checkout
+        # The button is an <a> tag; there are 3 instances (1 hidden mobile, 1 below items,
+        # 1 in sidebar). Target the visible sidebar one via its parent container.
         for selector in [
-            'button:has-text("Continue to Checkout")',
+            '.basket-summary a:has-text("Continue to Checkout")',
+            '.continue-to-checkout a:has-text("Continue to Checkout")',
+            'a.btn--primary:has-text("Continue to Checkout"):visible',
             'a:has-text("Continue to Checkout")',
-            '.basket-summary >> button',
-            'text=Continue to Checkout',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
@@ -557,16 +595,21 @@ class WineSocietyPurchaser(RetailerPurchaser):
             except Exception:
                 continue
         else:
-            # JS fallback: find any element containing "Continue to Checkout"
+            # JS fallback: click the visible one with largest bounding rect
             try:
                 clicked = self.page.evaluate('''() => {
                     const els = document.querySelectorAll('a, button, [role="button"]');
+                    let best = null, bestArea = 0;
                     for (const el of els) {
-                        if (el.textContent.trim().includes('Continue to Checkout')) {
-                            el.click();
-                            return true;
+                        if (el.textContent.trim().includes('Continue to Checkout') && el.offsetParent !== null) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width * r.height > bestArea) {
+                                best = el;
+                                bestArea = r.width * r.height;
+                            }
                         }
                     }
+                    if (best) { best.click(); return true; }
                     return false;
                 }''')
                 if clicked:
@@ -608,19 +651,22 @@ class WineSocietyPurchaser(RetailerPurchaser):
 
         self.screenshot("winesociety-review-pay")
 
-        # On Review & Pay page, look for Place Order / Confirm
+        # On Review & Pay page, scroll down and click "Complete your order"
+        # Button is id="gtm-confirm-purchase", type="submit"
+        self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(2)
+
         for selector in [
+            '#gtm-confirm-purchase',
+            'button:has-text("Complete your order")',
             'button:has-text("Place order")',
             'button:has-text("Place Order")',
             'button:has-text("Confirm order")',
-            'button:has-text("Confirm Order")',
             'button:has-text("Pay now")',
-            'button:has-text("Complete order")',
-            'button:has-text("Submit order")',
         ]:
             try:
                 self.page.click(selector, timeout=10000)
-                time.sleep(5)
+                time.sleep(10)
                 break
             except Exception:
                 continue
