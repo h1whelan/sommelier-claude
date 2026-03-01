@@ -237,82 +237,118 @@ class BBRPurchaser(RetailerPurchaser):
 
     def login(self):
         print("  Logging into Berry Bros & Rudd...")
-        self.page.goto("https://www.bbr.com/account/login", wait_until="domcontentloaded")
-        time.sleep(2)
+        self.page.goto("https://www.bbr.com/login", wait_until="networkidle", timeout=30000)
+        time.sleep(3)
         self.dismiss_cookies()
 
-        self.page.fill('input[name="email"], input[type="email"], #email', self.credentials["email"])
-        self.page.fill('input[name="password"], input[type="password"], #password', self.credentials["password"])
-        self.page.click('button[type="submit"], input[type="submit"]')
-        time.sleep(3)
+        self.page.fill("#login-modal-email", self.credentials["email"])
+        self.page.fill("#login-modal-password", self.credentials["password"])
+        self.screenshot("bbr-login-filled")
+        self.page.click('button:has-text("Sign in")', timeout=5000)
+        time.sleep(5)
 
-        if "login" in self.page.url.lower():
+        # BBR redirects to / or stays on /login on failure
+        # Check for the authenticated indicator
+        try:
+            self.page.wait_for_selector('.is-authenticated, [class*="is-authenticated"]', timeout=10000)
+            print("  Logged in successfully")
+            self.screenshot("bbr-logged-in")
+        except Exception:
             self.screenshot("bbr-login-failed")
             raise Exception("BBR login failed — check credentials")
 
-        print("  Logged in successfully")
-
     def add_to_cart(self, wine):
         print(f"  Adding: {wine['name']} ({wine['url']})")
-        self.page.goto(wine["url"], wait_until="domcontentloaded")
-        time.sleep(2)
+        self.page.goto(wine["url"], wait_until="networkidle", timeout=30000)
+        time.sleep(3)
 
         title = self.page.title()
-        if "404" in title or "not found" in title.lower():
+        if "not found" in title.lower() or "page not found" in title.lower():
             print(f"  WARNING: Product page not found for {wine['name']}")
             return False
 
+        self.screenshot(f"bbr-product-{wine['name'][:30].replace(' ', '-')}")
+
         for selector in [
+            'button:has-text("ADD TO BASKET")',
             'button:has-text("Add to basket")',
             'button:has-text("Add to Basket")',
-            'button:has-text("Add to bag")',
-            '.add-to-basket',
+            'button:has-text("BUY")',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
+                print(f"  Added to basket")
                 time.sleep(2)
                 return True
             except Exception:
                 continue
 
+        self.screenshot(f"bbr-no-add-button-{wine['name'][:20]}")
         print(f"  WARNING: Could not find add-to-basket button for {wine['name']}")
         return False
 
     def checkout(self):
         print("  Proceeding to BBR checkout...")
-        self.page.goto("https://www.bbr.com/basket", wait_until="domcontentloaded")
-        time.sleep(2)
+        # BBR basket is at /basket but may redirect to /cart
+        self.page.goto("https://www.bbr.com/basket", wait_until="networkidle", timeout=30000)
+        time.sleep(3)
         self.screenshot("bbr-basket")
 
+        # Extract total from page
         total_text = ""
-        for selector in ['.basket-total', '.order-total']:
+        try:
+            total_text = self.page.inner_text('[class*="total"], [data-testid*="total"]')
+        except Exception:
             try:
-                total_text = self.page.inner_text(selector)
-                break
+                # Fallback: look for price-like text
+                total_text = self.page.evaluate("""
+                    () => {
+                        const els = document.querySelectorAll('*');
+                        for (const el of els) {
+                            const text = el.textContent.trim();
+                            if (text.match(/^£\\d+\\.\\d{2}$/) && el.children.length === 0) {
+                                return text;
+                            }
+                        }
+                        return '';
+                    }
+                """)
             except Exception:
-                continue
+                pass
+
+        print(f"  Basket total: {total_text}")
 
         if self.dry_run:
             print("  DRY RUN — not completing checkout")
+            self.screenshot("bbr-checkout-dry-run")
             return {"status": "dry_run", "total": total_text, "retailer": "bbr"}
 
+        # Click checkout / proceed button
         for selector in [
             'a:has-text("Checkout")',
+            'a:has-text("CHECKOUT")',
             'button:has-text("Checkout")',
+            'button:has-text("Proceed")',
+            'a:has-text("Proceed to checkout")',
         ]:
             try:
                 self.page.click(selector, timeout=5000)
-                time.sleep(3)
+                time.sleep(5)
                 break
             except Exception:
                 continue
 
-        self.screenshot("bbr-checkout")
+        self.screenshot("bbr-checkout-step1")
 
+        # BBR checkout may have multiple steps (delivery, payment, confirm)
+        # With saved payment + address, look for final confirm/place order
         for selector in [
             'button:has-text("Place order")',
-            'button:has-text("Confirm")',
+            'button:has-text("Place Order")',
+            'button:has-text("Confirm order")',
             'button:has-text("Pay now")',
+            'button:has-text("Pay")',
+            'button:has-text("Complete order")',
         ]:
             try:
                 self.page.click(selector, timeout=10000)
@@ -322,7 +358,24 @@ class BBRPurchaser(RetailerPurchaser):
                 continue
 
         self.screenshot("bbr-order-confirmed")
-        return {"status": "ordered", "total": total_text, "retailer": "bbr"}
+
+        # Try to extract confirmation
+        confirmation = ""
+        try:
+            page_text = self.page.inner_text("body")
+            import re
+            match = re.search(r'(?:order|confirmation|reference)\s*(?:#|number|:)\s*(\w+)', page_text, re.IGNORECASE)
+            if match:
+                confirmation = match.group(1)
+        except Exception:
+            pass
+
+        return {
+            "status": "ordered",
+            "total": total_text,
+            "confirmation": confirmation,
+            "retailer": "bbr",
+        }
 
 
 class GenericPurchaser(RetailerPurchaser):
